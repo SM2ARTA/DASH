@@ -43,6 +43,11 @@ var TBL_OPS="dashboard_state";
 function sbSaveOps(d){fetch(SB_URL+"/rest/v1/"+TBL_OPS+"?id=eq.1",{method:"PATCH",headers:{"Content-Type":"application/json",apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,Prefer:"return=representation"},body:JSON.stringify({data:d,updated_at:new Date().toISOString()})}).then(function(r){return r.json();}).then(function(rows){if(!rows||rows.length===0){fetch(SB_URL+"/rest/v1/"+TBL_OPS,{method:"POST",headers:{"Content-Type":"application/json",apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,Prefer:"return=minimal"},body:JSON.stringify({id:1,data:d,updated_at:new Date().toISOString()})});}}).catch(function(err){console.warn("sb-ops:",err);});}
 function sbLoadOps(){return fetch(SB_URL+"/rest/v1/"+TBL_OPS+"?id=eq.1&select=data,updated_at",{headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY}}).then(function(r){return r.json();}).then(function(rows){return(rows&&rows[0])||null;}).catch(function(){return null;});}
 
+/* MSR (Shipment) table */
+var TBL_MSR="msr_state";
+function sbSaveMsr(d){fetch(SB_URL+"/rest/v1/"+TBL_MSR+"?id=eq.1",{method:"PATCH",headers:{"Content-Type":"application/json",apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,Prefer:"return=representation"},body:JSON.stringify({data:d,updated_at:new Date().toISOString()})}).then(function(r){return r.json();}).then(function(rows){if(!rows||rows.length===0){fetch(SB_URL+"/rest/v1/"+TBL_MSR,{method:"POST",headers:{"Content-Type":"application/json",apikey:SB_KEY,Authorization:"Bearer "+SB_KEY,Prefer:"return=minimal"},body:JSON.stringify({id:1,data:d,updated_at:new Date().toISOString()})});}}).catch(function(err){console.warn("sb-msr:",err);});}
+function sbLoadMsr(){return fetch(SB_URL+"/rest/v1/"+TBL_MSR+"?id=eq.1&select=data,updated_at",{headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY}}).then(function(r){return r.json();}).then(function(rows){return(rows&&rows[0])||null;}).catch(function(){return null;});}
+
 /* ═══════════════════ COLORS ═══════════════════ */
 var BG="#070b14",S1="#0e1525",S2="#151d2e",BD="#1a2744",TX="#e2e8f0",TD="#7a8ba8",TM="#4a5a74";
 var TEAL="#2dd4bf",CYAN="#22d3ee",GR="#34d399",AM="#fbbf24",PU="#a78bfa",BL="#60a5fa",RD="#f87171",PK="#f472b6",OR="#fb923c",GD="#d4a54a";
@@ -52,6 +57,12 @@ var TC={"Inbound":CYAN,"Outbound":AM,"Moving":PU,"Damage report":RD};
 var STC={"Created":AM,"Completed":GR,"Dispatched":BL};
 var PRC=[CYAN,GD,GR,PU,BL,RD,PK,OR,"#a3e635"];
 var BRAND="#CF5D5D";
+var MSR_SC={"Vessel Departed":BL,"Arrived in US":AM,"Customs Cleared":GR,"Delivery Date TBC":PU};
+var MSR_POD_C={"Ningbo (NGB)":CYAN,"Nansha (NSA)":TEAL,"Yantian (YTN)":OR,"TBC":TM};
+
+function mapMsrRow(r){
+  function dv(v){if(!v)return null;if(typeof v==="object"&&v.getTime)return v.toISOString().slice(0,10);var s=String(v);var m=s.match(/(\d{4})-(\d{2})-(\d{2})/);return m?m[0]:null;}
+  return{name:r["Name"],product:r["Product"],sku:r["FIFA SKU"],nomenclature:r["FIFA Nomenclature"],hsCode:r["HS Code"],fifaQty:Number(r["FIFA Qty"])||0,contingency:Number(r["RGS Contingency"])||0,totalQty:Number(r["Total QTY"])||0,shipType:r["Type of Shipment"],deliveries:Number(r["Qty of Deliveries"])||0,containers:Number(r["Qty of Containers"])||0,status:r["Status Update"],containerNum:r["Container Number"],seal:r["Seal Number"],hbl:r["HBL Number"],pod:r["Shipment POD"],etaUSA:dv(r["ETA USA"]),etaDallas:dv(r["ETA Dallas CFS"]),ataDallas:dv(r["ATA Dallas CFS"]),demurrage:r["Demurrage Deadline"],placeDel:r["Place of Delivery"],plannedDel:dv(r["Planned Delivery Date"]),delTime:r["Delivery time"],driver:r["Driver's name"],plate:r["License plate"],comments:r["Comments / Spare Components in Container"],palletQty:Number(r["Inbound - Qty per Single STD Pallet"])||0,totalPallets:Number(r["Total STD Pallets"])||0,lastUpdated:dv(r["Last Updated"]),recentUpdate:r["Updated in last 7 days?"]};}
 
 /* SM2ARTA Logo SVG inline */
 function Logo(p){var sz=p.size||24;return e("svg",{xmlns:"http://www.w3.org/2000/svg",viewBox:"0 0 224 224",width:sz,height:sz,style:p.style||{}},e("polygon",{fill:BRAND,points:"43,182 180,182 223,224 202,224 177,195 194,224 29,224 46,195 22,224 0,224"}),e("path",{fill:p.dark?"#070b14":"#e2e8f0",d:"M184 60c-5,-29 -34,-48 -63,-48l-25 0c-77,0 -80,118 7,118l24 0c14,0 15,24 0,24l-26 0c-6,0 -12,-5 -14,-10l-47 8c6,29 34,49 63,49l19 0c42,0 64,-30 63,-60 0,-29 -22,-58 -64,-58l-23 0c-15,0 -15,-25 0,-25l26 0c6,0 11,5 13,11l47 -9z"}));}
@@ -373,6 +384,183 @@ function OpsDash(p){
 }
 
 
+/* ═══════════════════ MSR (SHIPMENT) DASHBOARD ═══════════════════ */
+function MsrDash(p){
+  var shipments=p.shipments,clock=p.clock;
+
+  var st=useMemo(function(){
+    if(!shipments||!shipments.length)return null;
+    var total=shipments.length,totalQty=0,totalPallets=0,totalContainers=0;
+    var byStatus={},byPod={},byShipType={},byProduct={},etaDist={},recentYes=0;
+    var statusOrder=["Vessel Departed","Arrived in US","Customs Cleared","Delivery Date TBC"];
+
+    shipments.forEach(function(s){
+      totalQty+=s.totalQty;totalPallets+=s.totalPallets;totalContainers+=s.containers;
+      byStatus[s.status]=(byStatus[s.status]||0)+1;
+      byPod[s.pod]=(byPod[s.pod]||0)+1;
+      var st2=s.shipType||"Unknown";byShipType[st2]=(byShipType[st2]||0)+1;
+      byProduct[s.product]=(byProduct[s.product]||0)+s.totalQty;
+      if(s.etaDallas){var wk=s.etaDallas.slice(0,10);etaDist[wk]=(etaDist[wk]||0)+1;}
+      if(s.recentUpdate==="Yes")recentYes++;
+    });
+
+    /* Status pipeline ordered */
+    var statusArr=statusOrder.map(function(s2){return{name:s2,value:byStatus[s2]||0,color:MSR_SC[s2]||TD};});
+    /* Pod array */
+    var podArr=Object.entries(byPod).map(function(en){return{name:en[0],value:en[1],color:MSR_POD_C[en[0]]||TD};}).sort(function(a,b){return b.value-a.value;});
+    /* Ship type */
+    var typeArr=Object.entries(byShipType).map(function(en){return{name:en[0],value:en[1]};}).sort(function(a,b){return b.value-a.value;});
+    /* Products top 10 */
+    var prodArr=Object.entries(byProduct).map(function(en){return{name:en[0].length>25?en[0].slice(0,23)+"..":en[0],fullName:en[0],value:en[1]};}).sort(function(a,b){return b.value-a.value;}).slice(0,10);
+    /* ETA sorted */
+    var etaArr=Object.entries(etaDist).map(function(en){return{date:en[0],value:en[1]};}).sort(function(a,b){return a.date<b.date?-1:1;});
+    /* Arrived = customs cleared + arrived in US */
+    var arrived=(byStatus["Customs Cleared"]||0)+(byStatus["Arrived in US"]||0);
+    var inTransit=byStatus["Vessel Departed"]||0;
+    var cleared=byStatus["Customs Cleared"]||0;
+    /* Upcoming deliveries: those with plannedDel, sorted */
+    var upcoming=shipments.filter(function(s2){return s2.plannedDel;}).sort(function(a,b){return(a.plannedDel||"").localeCompare(b.plannedDel||"");}).slice(0,8);
+    /* Unique SKUs */
+    var skuSet={};shipments.forEach(function(s2){if(s2.sku)skuSet[s2.sku]=1;});
+
+    return{total:total,totalQty:totalQty,totalPallets:Math.round(totalPallets),totalContainers:totalContainers,statusArr:statusArr,podArr:podArr,typeArr:typeArr,prodArr:prodArr,etaArr:etaArr,arrived:arrived,inTransit:inTransit,cleared:cleared,recentYes:recentYes,upcoming:upcoming,skuCount:Object.keys(skuSet).length,byStatus:byStatus};
+  },[shipments]);
+
+  var has=shipments&&shipments.length>0&&st;
+  if(!has)return e("div",{style:{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}},
+    e("div",{style:{fontSize:40,opacity:.1}},"\uD83D\uDEA2"),
+    e("div",{style:{fontSize:14,color:TD,fontWeight:600}},"No Shipment Data"),
+    e("div",{style:{fontSize:11,color:TM}},"Upload MSR report (.xlsx)"),
+    e("label",{style:{marginTop:8,background:BRAND,borderRadius:8,padding:"8px 28px",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}},"Upload MSR",e("input",{type:"file",accept:".xlsx,.xls,.csv",onChange:p.handleMsrFile,style:{display:"none"}}))
+  );
+
+  /* ETA bar chart inline SVG */
+  function EtaChart(){
+    var ref=useRef(null);var _s=useState({w:400,h:140}),sz=_s[0],setSz=_s[1];
+    useEffect(function(){if(!ref.current)return;function m(){var r2=ref.current.getBoundingClientRect();if(r2.width>0&&r2.height>0)setSz({w:Math.round(r2.width),h:Math.round(r2.height)});}m();window.addEventListener("resize",m);return function(){window.removeEventListener("resize",m);};},[]);
+    var data=st.etaArr,max=0;data.forEach(function(d){if(d.value>max)max=d.value;});if(!max)max=1;
+    var W=sz.w,H=sz.h,padB=20,padT=14,chartH=H-padB-padT;
+    var gap=Math.max(Math.floor(W*.04),3),barW=Math.max(Math.floor((W-gap*(data.length+1))/data.length),12);
+    var cols=[CYAN,BL,TEAL,AM,GR,PU,OR,GD];
+    var items=[];
+    data.forEach(function(d,i){var x=gap+i*(barW+gap),bh=Math.max(Math.round((d.value/max)*chartH),4),y=padT+chartH-bh;
+      items.push(e("rect",{key:"b"+i,x:x,y:y,width:barW,height:bh,fill:cols[i%cols.length],rx:3,opacity:.85}));
+      items.push(e("text",{key:"v"+i,x:x+barW/2,y:y-3,textAnchor:"middle",fill:cols[i%cols.length],fontSize:Math.min(W*.035,11),fontWeight:700,fontFamily:"monospace"},d.value));
+      var lbl=d.date.slice(5);
+      items.push(e("text",{key:"l"+i,x:x+barW/2,y:H-3,textAnchor:"middle",fill:TM,fontSize:Math.min(W*.025,9)},lbl));
+    });
+    return e("div",{ref:ref,style:{width:"100%",height:"100%"}},e("svg",{width:W,height:H,viewBox:"0 0 "+W+" "+H},e("line",{x1:gap-2,y1:padT+chartH,x2:W-gap+2,y2:padT+chartH,stroke:BD,strokeWidth:1}),items));
+  }
+
+  return e(React.Fragment,null,
+    /* KPIs */
+    e("div",{style:{display:"flex",gap:"0.3vw",flexShrink:0}},
+      e(KPI,{label:"Shipments",value:st.total,sub:st.skuCount+" unique SKUs",color:BRAND}),
+      e(KPI,{label:"Total Items",value:fmtN(st.totalQty),sub:"across all shipments",color:CYAN}),
+      e(KPI,{label:"Containers",value:st.totalContainers,sub:"ocean freight",color:BL}),
+      e(KPI,{label:"Pallets",value:fmtN(st.totalPallets),sub:"estimated STD",color:PU}),
+      e(KPI,{label:"In Transit",value:st.inTransit,sub:"vessel departed",color:BL}),
+      e(KPI,{label:"Arrived",value:st.arrived,sub:st.cleared+" cleared",color:GR}),
+      e(KPI,{label:"Updated",value:st.recentYes+"/"+st.total,sub:"last 7 days",color:AM})
+    ),
+
+    /* ROW 2: Status Pipeline | ETA Timeline | Port of Departure */
+    e("div",{style:{display:"grid",gridTemplateColumns:"1.2fr 2.5fr 1fr",gap:"0.3vw",flex:4,minHeight:0}},
+      /* Status pipeline */
+      e(BoxOps,{title:"Shipment Pipeline"},
+        e("div",{style:{flex:1,display:"flex",flexDirection:"column",justifyContent:"center",gap:"0.6vh"}},
+          st.statusArr.map(function(s2,i){
+            var pct=Math.round(s2.value/st.total*100);
+            return e("div",{key:i,style:{display:"flex",alignItems:"center",gap:"0.3vw"}},
+              e("div",{style:{width:"5.5vw",fontSize:"min(0.5vw,9px)",color:s2.color,fontWeight:600,textAlign:"right",flexShrink:0}},s2.name),
+              e("div",{style:{flex:1,height:"1.2vh",minHeight:6,background:S2,borderRadius:4,overflow:"hidden",position:"relative"}},
+                e("div",{style:{height:"100%",width:pct+"%",background:s2.color,borderRadius:4,opacity:.8,animation:"barGrow .6s ease",transformOrigin:"left"}}),
+                e("span",{style:{position:"absolute",right:4,top:"50%",transform:"translateY(-50%)",fontSize:"min(0.4vw,7px)",color:TX,fontWeight:700,fontFamily:"monospace"}},s2.value)
+              )
+            );
+          }),
+          e("div",{style:{display:"flex",justifyContent:"center",gap:"0.5vw",marginTop:"0.4vh"}},st.statusArr.map(function(s2){return e("div",{key:s2.name,style:{display:"flex",alignItems:"center",gap:3,fontSize:"min(0.4vw,7px)"}},e("span",{style:{width:6,height:3,borderRadius:1,background:s2.color,display:"inline-block"}}),e("span",{style:{color:TM}},s2.value));}))
+        )
+      ),
+      /* ETA Timeline */
+      e(BoxOps,{title:"ETA Dallas CFS (containers by date)"},
+        e("div",{style:{flex:1,minHeight:0}},e(EtaChart,null))
+      ),
+      /* Port of Departure */
+      e(BoxOps,{title:"Port of Departure"},
+        e("div",{style:{flex:1,display:"flex",flexDirection:"column",justifyContent:"center",gap:"0.5vh"}},
+          st.podArr.map(function(d,i){
+            var max2=st.podArr[0]?st.podArr[0].value:1;var pct=Math.round(d.value/max2*100);
+            return e("div",{key:i,style:{display:"flex",alignItems:"center",gap:4}},
+              e("div",{style:{width:"4vw",fontSize:"min(0.5vw,8px)",color:d.color,textAlign:"right",flexShrink:0,fontWeight:600}},d.name.replace(/ \(.*\)/,"")),
+              e("div",{style:{flex:1,height:"0.8vh",minHeight:4,background:S2,borderRadius:3,overflow:"hidden"}},e("div",{style:{height:"100%",width:pct+"%",background:d.color,borderRadius:3,opacity:.7}})),
+              e("span",{style:{fontSize:"min(0.5vw,8px)",fontWeight:700,color:d.color,fontFamily:"monospace",minWidth:"1.5vw",textAlign:"right"}},d.value)
+            );
+          })
+        )
+      )
+    ),
+
+    /* ROW 3: Products | Shipment Table | Upcoming + Type */
+    e("div",{style:{display:"grid",gridTemplateColumns:"1.3fr 2.2fr 1fr",gap:"0.3vw",flex:6,minHeight:0}},
+      /* Products by qty */
+      e(BoxOps,{title:"Items by Product"},
+        e("div",{style:{flex:1,display:"flex",flexDirection:"column",justifyContent:"center"}},
+          e(HBarOps,{data:st.prodArr,colors:PRC})
+        )
+      ),
+      /* Shipment table */
+      e(BoxOps,{title:"Shipment Details"},
+        e("div",{style:{flex:1,overflowY:"auto",minHeight:0}},
+          e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:"min(0.5vw,9px)"}},
+            e("thead",null,e("tr",{style:{borderBottom:"1px solid "+BD}},["Name","Product","Qty","Plts","Type","Status","ETA Dallas"].map(function(h){return e("th",{key:h,style:{padding:"0.2vh 0.25vw",textAlign:"left",fontSize:"min(0.4vw,7px)",fontWeight:700,color:TM,textTransform:"uppercase",position:"sticky",top:0,background:S1,zIndex:1}},h);}))),
+            e("tbody",null,shipments.slice(0,20).map(function(s2,i){
+              var sc2=MSR_SC[s2.status]||TD;
+              return e("tr",{key:i,style:{borderBottom:"1px solid "+BD+"10"}},
+                e("td",{style:{padding:"0.2vh 0.2vw",fontFamily:"monospace",fontWeight:600,color:BRAND,fontSize:"min(0.45vw,8px)"}},s2.name),
+                e("td",{style:{padding:"0.2vh 0.2vw",color:TX,maxWidth:"10vw",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},s2.product),
+                e("td",{style:{padding:"0.2vh 0.2vw",fontFamily:"monospace",color:CYAN,fontWeight:700}},fmtN(s2.totalQty)),
+                e("td",{style:{padding:"0.2vh 0.2vw",fontFamily:"monospace",color:PU}},Math.round(s2.totalPallets)),
+                e("td",{style:{padding:"0.2vh 0.2vw",color:TD,fontSize:"min(0.4vw,7px)"}},s2.shipType),
+                e("td",{style:{padding:"0.2vh 0.2vw"}},e("span",{style:{padding:"1px 4px",borderRadius:3,background:sc2+"15",color:sc2,fontSize:"min(0.45vw,7px)",fontWeight:600,borderLeft:"2px solid "+sc2}},s2.status)),
+                e("td",{style:{padding:"0.2vh 0.2vw",color:TM,fontSize:"min(0.4vw,7px)"}},s2.etaDallas||"-")
+              );
+            }))
+          )
+        )
+      ),
+      /* Right column: Upcoming + Shipment Type */
+      e("div",{style:{display:"flex",flexDirection:"column",gap:"0.3vw",minHeight:0}},
+        e(BoxOps,{title:e("span",{style:{display:"flex",alignItems:"center",gap:4}},e("span",{style:{width:5,height:5,borderRadius:"50%",background:AM,display:"inline-block",animation:"pulse 2s infinite"}}),"Planned Deliveries"),style:{flex:3}},
+          e("div",{style:{flex:1,display:"flex",flexDirection:"column",gap:"0.3vh",overflowY:"auto"}},
+            st.upcoming.length>0?st.upcoming.map(function(s2,i){
+              return e("div",{key:i,style:{padding:"0.3vh 0.4vw",background:S2,borderRadius:5,border:"1px solid "+BD,display:"flex",alignItems:"center",gap:"0.3vw"}},
+                e("span",{style:{fontFamily:"monospace",fontWeight:700,color:BRAND,fontSize:"min(0.5vw,9px)",flexShrink:0}},s2.name),
+                e("div",{style:{flex:1,minWidth:0}},
+                  e("div",{style:{fontSize:"min(0.45vw,7px)",color:TX,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},s2.product),
+                  e("div",{style:{fontSize:"min(0.35vw,6px)",color:TM}},s2.plannedDel+(s2.delTime?" @ "+s2.delTime:""))
+                ),
+                e("span",{style:{fontSize:"min(0.4vw,7px)",color:CYAN,fontFamily:"monospace",fontWeight:700,flexShrink:0}},fmtN(s2.totalQty))
+              );
+            }):e("div",{style:{textAlign:"center",color:TM,fontSize:"min(0.5vw,8px)"}},"No upcoming")
+          )
+        ),
+        e(BoxOps,{title:"Container Types",style:{flex:2}},
+          e("div",{style:{flex:1,display:"flex",flexDirection:"column",justifyContent:"center",gap:"0.4vh"}},
+            st.typeArr.map(function(t2,i){var col=[BL,TEAL,AM,PU][i%4];
+              return e("div",{key:i,style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0.3vh 0.4vw",background:S2,borderRadius:4,border:"1px solid "+BD}},
+                e("span",{style:{fontSize:"min(0.48vw,8px)",color:col,fontWeight:600}},t2.name),
+                e("span",{style:{fontFamily:"monospace",fontSize:"min(0.55vw,9px)",fontWeight:800,color:col}},t2.value)
+              );
+            })
+          )
+        )
+      )
+    )
+  );
+}
+
+
 /* ═══════════════════ SUPABASE STORAGE (for SharePoint bridge) ═══════════════════ */
 var BUCKET="dashboard-files";
 
@@ -534,6 +722,10 @@ function App(){
   var _fnO=useState(""),fnameOps=_fnO[0],setFnameOps=_fnO[1];
   var _uO=useState(null),updatedOps=_uO[0],setUpdatedOps=_uO[1];
 
+  /* MSR (Shipment) state */
+  var _msr=useState(null),shipments=_msr[0],setShipments=_msr[1];
+  var _uM=useState(null),updatedMsr=_uM[0],setUpdatedMsr=_uM[1];
+
   /* Settings */
   var _showS=useState(false),showSettings=_showS[0],setShowSettings=_showS[1];
   var _cfg=useState({enabled:false,interval:5}),cfg=_cfg[0],setCfg=_cfg[1];
@@ -563,7 +755,7 @@ function App(){
     var countdown=setInterval(function(){
       rotRef.current=rotRef.current-1;
       if(rotRef.current<=0){
-        setTab(function(t){return t===0?1:0;});
+        setTab(function(t){return(t+1)%3;});
         rotRef.current=ROTATE_MS/1000;
       }
       setRotTm(rotRef.current);
@@ -574,10 +766,11 @@ function App(){
   /* Initial load from Supabase */
   useEffect(function(){
     if(!authed)return;
-    Promise.all([sbLoadInv(),sbLoadOps()]).then(function(res){
-      var inv=res[0],ops=res[1];
+    Promise.all([sbLoadInv(),sbLoadOps(),sbLoadMsr()]).then(function(res){
+      var inv=res[0],ops=res[1],msr=res[2];
       if(inv&&inv.data){if(inv.data.stock)setStock(inv.data.stock);if(inv.data.nomen)setNomen(inv.data.nomen);if(inv.data.fnames)setFnamesInv(inv.data.fnames);setUpdatedInv(inv.updated_at);}
       if(ops&&ops.data&&ops.data.txns){setTxns(ops.data.txns.map(function(t){var tp=t.type;if(tp==="Stock correction")tp="Outbound";return Object.assign({},t,{type:tp});}));setFnameOps(ops.data.fname||"");setUpdatedOps(ops.updated_at);}
+      if(msr&&msr.data&&msr.data.shipments){setShipments(msr.data.shipments);setUpdatedMsr(msr.updated_at);}
       setSbOk(true);
     }).catch(function(){setSbOk(true);});
   },[authed]);
@@ -588,6 +781,7 @@ function App(){
     var t=setInterval(function(){
       sbLoadInv().then(function(inv){if(inv&&inv.data){if(inv.data.stock)setStock(inv.data.stock);if(inv.data.nomen)setNomen(inv.data.nomen);if(inv.data.fnames)setFnamesInv(inv.data.fnames);setUpdatedInv(inv.updated_at);}});
       sbLoadOps().then(function(ops){if(ops&&ops.data&&ops.data.txns){setTxns(ops.data.txns.map(function(t2){var tp=t2.type;if(tp==="Stock correction")tp="Outbound";return Object.assign({},t2,{type:tp});}));setFnameOps(ops.data.fname||"");setUpdatedOps(ops.updated_at);}});
+      sbLoadMsr().then(function(msr){if(msr&&msr.data&&msr.data.shipments){setShipments(msr.data.shipments);setUpdatedMsr(msr.updated_at);}});
     },60000);
     return function(){clearInterval(t);};
   },[authed]);
@@ -681,6 +875,24 @@ function App(){
       }catch(err){console.error(err);}
     };if(file.name.match(/\.csv$/i))reader.readAsText(file);else reader.readAsArrayBuffer(file);ev.target.value="";}
 
+  function handleMsrFile(ev){
+    var file=ev.target.files&&ev.target.files[0];if(!file)return;
+    var reader=new FileReader();reader.onload=function(evt){
+      try{
+        var data=new Uint8Array(evt.target.result);
+        var wb=XLSX.read(data,{type:"array",cellDates:true});
+        var sheet=wb.Sheets[wb.SheetNames[0]];
+        /* Headers are in row 3 (A3), data starts row 4 */
+        var allRows=XLSX.utils.sheet_to_json(sheet,{defval:null,range:2});
+        var mapped=allRows.filter(function(r2){return r2["Name"]&&String(r2["Name"]).trim()!=="";}).map(mapMsrRow);
+        if(mapped.length>0){
+          setShipments(mapped);var now=new Date().toISOString();setUpdatedMsr(now);
+          sbSaveMsr({shipments:mapped});
+          setInvMsg("MSR: "+mapped.length+" shipments");setTimeout(function(){setInvMsg("");},3000);
+        }
+      }catch(err){console.error("MSR parse error:",err);}
+    };reader.readAsArrayBuffer(file);ev.target.value="";}
+
   function saveCfg(newCfg){
     setCfg(newCfg);
     try{window.localStorage.setItem("wh_dash_cfg",JSON.stringify(newCfg));}catch(ex){}
@@ -695,7 +907,8 @@ function App(){
 
   var tabs=[
     {label:"Inventory",icon:"I",color:TEAL},
-    {label:"Operations",icon:"W",color:GD}
+    {label:"Operations",icon:"O",color:GD},
+    {label:"Shipments",icon:"S",color:BRAND}
   ];
 
   return e("div",{style:{height:"100vh",display:"flex",flexDirection:"column",background:BG,color:TX,overflow:"hidden"}},
@@ -729,14 +942,16 @@ function App(){
         /* Data status */
         e("div",{style:{display:"flex",gap:"0.3vw",fontSize:"min(0.38vw,6px)"}},
           e("span",{style:{color:stock?GR:TM}},stock?"\u2713Inv":"\u25CBInv"),
-          e("span",{style:{color:txns?GR:TM}},txns?"\u2713Ops":"\u25CBOps")
+          e("span",{style:{color:txns?GR:TM}},txns?"\u2713Ops":"\u25CBOps"),
+          e("span",{style:{color:shipments?GR:TM}},shipments?"\u2713MSR":"\u25CBMSR")
         ),
         invMsg?e("span",{style:{fontSize:"min(0.38vw,6px)",color:GR,fontWeight:600}},invMsg):null,
         spMsg?e("span",{style:{fontSize:"min(0.38vw,6px)",color:BL,fontWeight:600}},spMsg):null,
         cfg.enabled?e("span",{style:{fontSize:"min(0.35vw,6px)",color:GR}},"\u25CF SP Sync"):null,
         /* Upload for current tab */
         tab===0?e("label",{style:{background:S2,border:"1px solid "+BD,borderRadius:4,padding:"0.15vh 0.4vw",color:TEAL,fontSize:"min(0.42vw,7px)",fontWeight:600,cursor:"pointer"}},"\u2191 Inventory",e("input",{type:"file",accept:".xlsx,.xls,.csv",multiple:true,onChange:handleInvFiles,style:{display:"none"}})):
-        e("label",{style:{background:S2,border:"1px solid "+BD,borderRadius:4,padding:"0.15vh 0.4vw",color:GD,fontSize:"min(0.42vw,7px)",fontWeight:600,cursor:"pointer"}},"\u2191 Operations",e("input",{type:"file",accept:".xlsx,.xls,.csv",onChange:handleOpsFile,style:{display:"none"}})),
+        tab===1?e("label",{style:{background:S2,border:"1px solid "+BD,borderRadius:4,padding:"0.15vh 0.4vw",color:GD,fontSize:"min(0.42vw,7px)",fontWeight:600,cursor:"pointer"}},"\u2191 Operations",e("input",{type:"file",accept:".xlsx,.xls,.csv",onChange:handleOpsFile,style:{display:"none"}})):
+        e("label",{style:{background:S2,border:"1px solid "+BD,borderRadius:4,padding:"0.15vh 0.4vw",color:BRAND,fontSize:"min(0.42vw,7px)",fontWeight:600,cursor:"pointer"}},"\u2191 MSR",e("input",{type:"file",accept:".xlsx,.xls",onChange:handleMsrFile,style:{display:"none"}})),
         /* Settings gear */
         e("button",{onClick:function(){setShowSettings(true);},style:{background:"transparent",border:"1px solid "+BD,borderRadius:4,padding:"0.15vh 0.3vw",color:TD,fontSize:"min(0.5vw,9px)",cursor:"pointer",lineHeight:1}},"\u2699"),
         e("div",{style:{fontFamily:"monospace",fontSize:"min(0.7vw,11px)",fontWeight:700,color:tabs[tab].color}},clock.toLocaleTimeString("en-US",{hour12:false})),
@@ -747,7 +962,8 @@ function App(){
     /* MAIN CONTENT */
     e("main",{style:{flex:1,padding:"0.4vh 0.5vw",display:"flex",flexDirection:"column",gap:"0.3vh",overflow:"hidden",minHeight:0}},
       tab===0?e(InventoryDash,{stock:stock,nomen:nomen,updatedInv:updatedInv,handleInvFiles:handleInvFiles,invMsg:invMsg,sbOk:sbOk,clock:clock}):
-      e(OpsDash,{txns:txns,updatedOps:updatedOps,handleOpsFile:handleOpsFile,sbOk:sbOk,clock:clock})
+      tab===1?e(OpsDash,{txns:txns,updatedOps:updatedOps,handleOpsFile:handleOpsFile,sbOk:sbOk,clock:clock}):
+      e(MsrDash,{shipments:shipments,updatedMsr:updatedMsr,handleMsrFile:handleMsrFile,clock:clock})
     ),
 
     /* FOOTER */
